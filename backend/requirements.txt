@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+sqlalchemy
+pydantic
+requests
+python-dotenv
+pandas
+scikit-learn
+xgboost
+beautifulsoup4
+lxml

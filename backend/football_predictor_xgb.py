@@ -34,14 +34,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from category_encoders import OrdinalEncoder
-from sklearn.calibration import CalibratedClassifierCV
+from sklearn.calibration import CalibratedClassifierCV, calibration_curve
+from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.metrics import (
-    accuracy_score,
-    confusion_matrix,
-    f1_score,
-    log_loss,
-    precision_recall_fscore_support,
+    accuracy_score, f1_score, log_loss, confusion_matrix,
+    precision_recall_fscore_support, recall_score
 )
+import matplotlib.pyplot as plt
 from sklearn.model_selection import TimeSeriesSplit
 
 warnings.filterwarnings("ignore")
@@ -322,6 +321,15 @@ def build_features(df: pd.DataFrame, window: int = FORM_WINDOW,
         .fit_transform(df[["home_team", "away_team"]])
         .values
     )
+    
+    # FIX — Bug 3: Handle unseen teams by mapping -1 (unknown) to 0 (neutral prior)
+    df["home_team_id"] = df["home_team_id"].replace(-1, 0)
+    df["away_team_id"] = df["away_team_id"].replace(-1, 0)
+    
+    # Assert for Bug 3 regression
+    test_df = pd.DataFrame([["NEW_TEAM_X", "NEW_TEAM_Y"]], columns=["home_team", "away_team"])
+    test_encoded = team_enc.transform(test_df).replace(-1, 0)
+    assert (test_encoded.values == 0).all(), "OrdinalEncoder failed to map unknown teams to 0"
 
     df["elo_delta"]       = df["home_elo"]        - df["away_elo"]
     df["xg_delta"]        = df["home_xg"]         - df["away_xg"]
@@ -398,7 +406,41 @@ def evaluate_fold(y_true, y_pred, y_proba, fold):
         print(f"  {OUTCOME_LABELS[k]:<10s} {prec[k]:>7.4f} {rec[k]:>7.4f}"
               f" {f1c[k]:>7.4f}")
 
-    return {"acc": acc, "f1": f1, "rps": rps, "log_loss": ll}
+    draw_recall = rec[0]
+    return {"acc": acc, "f1": f1, "rps": rps, "log_loss": ll, "draw_recall": draw_recall}
+
+
+def plot_reliability_diagram(y_true, y_proba, title="Reliability Diagram"):
+    """
+    Bug 8: Validate calibration quality.
+    Each bin should sit close to the diagonal.
+    """
+    plt.figure(figsize=(8, 6))
+    
+    # Plot for each class (Home, Draw, Away)
+    colors = ['blue', 'orange', 'green']
+    labels = ['Draw', 'Home Win', 'Away Win']
+    
+    for i in range(3):
+        prob_true, prob_pred = calibration_curve(
+            (y_true == i).astype(int), 
+            y_proba[:, i], 
+            n_bins=10
+        )
+        plt.plot(prob_pred, prob_true, marker='o', label=labels[i], color=colors[i])
+        
+    plt.plot([0, 1], [0, 1], linestyle='--', color='gray', label='Perfectly Calibrated')
+    plt.xlabel('Predicted Probability')
+    plt.ylabel('Empirical Frequency')
+    plt.title(title)
+    plt.legend()
+    plt.grid(True)
+    
+    # Save the plot
+    save_path = os.path.join(os.getcwd(), "calibration_curve.png")
+    plt.savefig(save_path)
+    print(f"[INFO] Calibration plot saved to: {save_path}")
+    plt.close()
 
 
 # ===========================================================================
@@ -415,10 +457,7 @@ def _make_classifier():
 
 
 def _compute_sample_weights(y: np.ndarray) -> np.ndarray:
-    counts = np.bincount(y, minlength=3).astype(float)
-    freq   = counts / counts.sum()
-    w_map  = {cls: 1.0 / (freq[cls] + 1e-9) for cls in range(3)}
-    return np.array([w_map[int(yi)] for yi in y])
+    return compute_sample_weight('balanced', y)
 
 
 # ===========================================================================
@@ -445,6 +484,10 @@ class CVResult:
     def mean_log_loss(self) -> float:
         return float(np.mean([m["log_loss"] for m in self.fold_metrics]))
 
+    @property
+    def mean_draw_recall(self) -> float:
+        return float(np.mean([m["draw_recall"] for m in self.fold_metrics]))
+
     def summary(self) -> None:
         print(f"\n{'='*56}")
         print(f"  CROSS-VALIDATION SUMMARY  ({len(self.fold_metrics)} folds)")
@@ -453,36 +496,58 @@ class CVResult:
         print(f"  Mean Macro F1  : {self.mean_f1:.4f}")
         print(f"  Mean RPS       : {self.mean_rps:.4f}  (lower is better)")
         print(f"  Mean Log Loss  : {self.mean_log_loss:.4f}  (lower is better)")
+        print(f"  Mean Draw Recall: {self.mean_draw_recall:.4f}")
         print(f"\n  Expected accuracy range for football: 50-58%")
 
 
 def cross_validate_model(X, y, n_splits=N_SPLITS):
-    tscv   = TimeSeriesSplit(n_splits=n_splits)
+    # FIX 1: Enforce minimum training size
+    from football_ensemble import walk_forward_split
+    tscv_iterator = list(walk_forward_split(X, n_splits=n_splits, min_train_size=150))
     result = CVResult()
     X_arr  = X.values
+    y_arr  = y.values if hasattr(y, 'values') else y
 
     print(f"\n{'='*56}")
     print(f"  WALK-FORWARD TIME-SERIES CROSS-VALIDATION")
-    print(f"  Dataset: {len(X)} matches · {n_splits} folds")
+    print(f"  Dataset: {len(X)} matches · {len(tscv_iterator)} folds")
     print(f"{'='*56}")
 
-    for fold, (train_idx, val_idx) in enumerate(tscv.split(X_arr), start=1):
+    for fold, (train_idx, val_idx) in enumerate(tscv_iterator, start=1):
+        # FIX — Bug 2: Assert chronological split to prevent future leakage
+        assert max(train_idx) < min(val_idx), f"Temporal Leakage in Fold {fold}: max(train) >= min(val)"
+        
         X_tr, X_val = X_arr[train_idx], X_arr[val_idx]
-        y_tr, y_val = y[train_idx],     y[val_idx]
+        y_tr, y_val = y_arr[train_idx], y_arr[val_idx]
 
-        sw_tr = _compute_sample_weights(y_tr)
-        clf   = _make_classifier()
-        clf.fit(X_tr, y_tr, sample_weight=sw_tr)
+        # Bug 8 Fix: Carve out LAST 20% for calibration (never seen by base clf)
+        cal_size = int(0.2 * len(X_tr))
+        X_tr_sub = X_tr[:-cal_size]
+        y_tr_sub = y_tr[:-cal_size]
+        X_cal = X_tr[-cal_size:]
+        y_cal = y_tr[-cal_size:]
+        
+        # Regression Assert for Bug 8
+        assert len(X_tr_sub) > 0, "Training set too small for calibration split"
+        assert not np.array_equal(X_tr_sub, X_tr), "Leakage: calibration data not separated from training data"
 
-        cal_size  = max(50, int(0.2 * len(X_tr)))
-        cal_clf   = CalibratedClassifierCV(clf, method="isotonic", cv="prefit")
-        cal_clf.fit(X_tr[-cal_size:], y_tr[-cal_size:])
+        sw_tr_sub = _compute_sample_weights(y_tr_sub)
+        clf = _make_classifier()
+        clf.fit(X_tr_sub, y_tr_sub, sample_weight=sw_tr_sub)
+
+        # Fit calibration on held-out set
+        cal_clf = CalibratedClassifierCV(clf, method="isotonic", cv="prefit")
+        cal_clf.fit(X_cal, y_cal)
 
         y_pred  = cal_clf.predict(X_val)
         y_proba = cal_clf.predict_proba(X_val)
 
         metrics = evaluate_fold(y_val, y_pred, y_proba, fold)
         result.fold_metrics.append(metrics)
+        
+        # Plot calibration for the final fold
+        if fold == n_splits:
+            plot_reliability_diagram(y_val, y_proba, title=f"Reliability Diagram (Fold {fold})")
 
     result.summary()
     return result
@@ -514,14 +579,20 @@ def train_final_model(df, feature_cols, holdout_fraction=HOLDOUT_FRACTION,
     X_ho = hold_df[feature_cols].values
     y_ho = hold_df["outcome"].values
 
-    sw_tr = _compute_sample_weights(y_tr)
+    # Bug 8 Fix: Calibration split for final model
+    cal_size = int(0.2 * len(X_tr))
+    X_tr_sub = X_tr[:-cal_size]
+    y_tr_sub = y_tr[:-cal_size]
+    X_cal = X_tr[-cal_size:]
+    y_cal = y_tr[-cal_size:]
+
+    sw_tr_sub = _compute_sample_weights(y_tr_sub)
 
     base_clf = _make_classifier()
-    base_clf.fit(X_tr, y_tr, sample_weight=sw_tr)
+    base_clf.fit(X_tr_sub, y_tr_sub, sample_weight=sw_tr_sub)
 
-    cal_size  = max(50, int(0.2 * len(X_tr)))
-    cal_clf   = CalibratedClassifierCV(base_clf, method="isotonic", cv="prefit")
-    cal_clf.fit(X_tr[-cal_size:], y_tr[-cal_size:])
+    cal_clf = CalibratedClassifierCV(base_clf, method="isotonic", cv="prefit")
+    cal_clf.fit(X_cal, y_cal)
 
     y_pred  = cal_clf.predict(X_ho)
     y_proba = cal_clf.predict_proba(X_ho)
@@ -734,10 +805,10 @@ def main(csv_path=None, json_path=None, window=FORM_WINDOW, n_splits=N_SPLITS):
 
     X = df[feature_cols]
     y = df["outcome"].values
-    cross_validate_model(X, y, n_splits=n_splits)
+    cv_res = cross_validate_model(X, y, n_splits=n_splits)
 
     print("\n[INFO] Training final calibrated model...")
-    pipeline, _ = train_final_model(df, feature_cols, window=window)
+    pipeline, ho_metrics = train_final_model(df, feature_cols, window=window)
 
     teams = df_raw["home_team"].unique()
     if len(teams) >= 2:
@@ -753,7 +824,7 @@ def main(csv_path=None, json_path=None, window=FORM_WINDOW, n_splits=N_SPLITS):
         print(f"  Away Win     : {pred['probabilities']['away_win']:.2%}")
         print(f"  Confidence   : {pred['confidence']:.2%}")
 
-    return pipeline
+    return {"pipeline": pipeline, "cv": cv_res, "ho": ho_metrics}
 
 
 # ===========================================================================

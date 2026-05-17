@@ -1,7 +1,8 @@
 import json
 import os
 import math
-from football_predictor_xgb import XGBPredictionEngine
+import pandas as pd
+from football_ensemble import FootballEnsembleEngine
 from player_data import get_player_stats
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -10,23 +11,34 @@ DATA_FILE = os.path.join(PROJECT_ROOT, 'src/data/matches-all-seasons.json')
 class PredictionEngine:
     def __init__(self):
         self.matches = []
-        self.xgb_engine = None
+        self.ensemble = FootballEnsembleEngine(DATA_FILE)
+        self.is_ready = False
         self.load_data()
 
     def load_data(self):
         if os.path.exists(DATA_FILE):
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
                 raw = json.load(f)
+                df_list = []
                 for m in raw:
                     m['homeTeam'] = " ".join(m['homeTeam'].replace('\n', ' ').split()).strip()
                     m['awayTeam'] = " ".join(m['awayTeam'].replace('\n', ' ').split()).strip()
-                self.matches = raw
+                    df_list.append(m)
+                self.matches = df_list
             
-            # Initialize XGBoost Engine
-            self.xgb_engine = XGBPredictionEngine(DATA_FILE)
+            # Train Ensemble Engine
+            print("[PredictionEngine] Training Stacking Ensemble...")
+            df = pd.DataFrame(self.matches)
+            try:
+                self.ensemble.train(df)
+                self.is_ready = True
+                print("[PredictionEngine] Ensemble ready.")
+            except Exception as e:
+                print(f"[ERROR] Failed to train ensemble: {e}")
+                self.is_ready = False
         else:
             self.matches = []
-            self.xgb_engine = None
+            self.is_ready = False
 
     def get_teams(self):
         teams = set()
@@ -48,8 +60,8 @@ class PredictionEngine:
         return h2h[:5]
 
     def predict_match(self, home_team, away_team):
-        if not self.xgb_engine:
-            return {"error": "Engine not ready. Ensure match data exists."}
+        if not self.is_ready:
+            return {"error": "Engine not ready. Ensure match data exists and model is trained."}
 
         # Fetch Player Data & Injury Status
         home_player_stats = get_player_stats(home_team)
@@ -58,95 +70,88 @@ class PredictionEngine:
         home_injured = home_player_stats["key_injured"]
         away_injured = away_player_stats["key_injured"]
 
-        # Predict using XGBoost Engine
-        xgb_result = self.xgb_engine.predict(home_team, away_team, home_injured, away_injured)
+        # Predict using Ensemble Engine
+        result = self.ensemble.predict(home_team, away_team, home_injured, away_injured)
         
-        if not xgb_result:
-            return {"error": f"Could not generate prediction for {home_team} vs {away_team}"}
+        if "error" in result:
+            return {"error": f"Ensemble error: {result['error']}"}
 
-        # Format the response to maintain compatibility with the frontend
-        # The frontend expects certain fields that were previously calculated in predictor.py
+        # Format the response for the frontend
+        home_win_prob = result['home_win'] * 100
+        draw_prob = result['draw'] * 100
+        away_win_prob = result['away_win'] * 100
         
-        # Determine predicted score based on probabilities (simplified)
-        # In a real scenario, we might use Poisson or another method for the score specifically, 
-        # but let's estimate based on typical results for the predicted outcome.
-        
-        home_win_prob = xgb_result['home_win']
-        draw_prob = xgb_result['draw']
-        away_win_prob = xgb_result['away_win']
-        
-        if home_win_prob > draw_prob and home_win_prob > away_win_prob:
-            predicted_score = "2 - 1"
-        elif away_win_prob > draw_prob:
-            predicted_score = "1 - 2"
-        else:
-            predicted_score = "1 - 1"
-
-        # Calculate confidence from the winning probability
-        confidence = max(home_win_prob, draw_prob, away_win_prob)
+        predicted_score = result['most_likely_score']
+        confidence_val = max(result['home_win'], result['draw'], result['away_win'])
 
         # Calculate basic form and stats for the frontend
         def get_team_stats(team):
             team_matches = [m for m in self.matches if m['homeTeam'] == team or m['awayTeam'] == team]
             played = len(team_matches)
             if played == 0:
-                return {"avg_scored": 0, "avg_conceded": 0, "played": 0, "strength": "AVERAGE", "lambda": 1.0}
+                return {"avg_scored": 0, "avg_conceded": 0, "played": 0, "strength": "AVERAGE"}
             
-            goals_scored = sum([m['homeScore'] if m['homeTeam'] == team else m['awayScore'] for m in team_matches])
-            goals_conceded = sum([m['awayScore'] if m['homeTeam'] == team else m['homeScore'] for m in team_matches])
-            avg_scored = goals_scored / played
+            gs = sum([m['homeScore'] if m['homeTeam'] == team else m['awayScore'] for m in team_matches])
+            gc = sum([m['awayScore'] if m['homeTeam'] == team else m['homeScore'] for m in team_matches])
+            avg_s = gs / played
             return {
-                "avg_scored": round(avg_scored, 2),
-                "avg_conceded": round(goals_conceded / played, 2),
+                "avg_scored": round(avg_s, 2),
+                "avg_conceded": round(gc / played, 2),
                 "played": played,
-                "strength": "STRONG" if avg_scored > 1.5 else "AVERAGE" if avg_scored > 1.0 else "WEAK",
-                "lambda": round(avg_scored, 2) # Mock lambda using avg scored
+                "strength": "STRONG" if avg_s > 1.5 else "AVERAGE" if avg_s > 1.0 else "WEAK"
             }
 
         def get_recent_form(team):
             team_matches = [m for m in self.matches if m['homeTeam'] == team or m['awayTeam'] == team]
             team_matches.sort(key=lambda x: x['date'], reverse=True)
-            recent = team_matches[:38] # Keep enough for stats, but use top 5 for history UI
+            recent = team_matches[:5]
             history = []
-            pts, w, d, l, gs, gc = 0, 0, 0, 0, 0, 0
-            for i, m in enumerate(recent):
+            pts = 0
+            for m in recent:
                 is_home = m['homeTeam'] == team
                 score = m['homeScore'] if is_home else m['awayScore']
                 opp = m['awayScore'] if is_home else m['homeScore']
-                gs += score
-                gc += opp
                 if score > opp: 
                     outcome, p = "Win", 3
-                    w += 1
                 elif score == opp: 
                     outcome, p = "Draw", 1
-                    d += 1
                 else: 
                     outcome, p = "Loss", 0
-                    l += 1
                 
-                if i < 5: # Only first 5 for history display
-                    history.append({"date": m['date'], "opponent": m['awayTeam'] if is_home else m['homeTeam'], "outcome": outcome, "score": f"{score}-{opp}"})
-                    pts += p
+                history.append({
+                    "date": m['date'], 
+                    "opponent": m['awayTeam'] if is_home else m['homeTeam'], 
+                    "outcome": outcome, 
+                    "score": f"{score}-{opp}"
+                })
+                pts += p
             
             return {
                 "match_history": history, 
                 "points": pts, 
-                "label": "GOOD FORM" if pts >= 10 else "STABLE" if pts >= 6 else "POOR FORM",
-                "wins": w, "draws": d, "losses": l,
-                "goals_scored": gs, "goals_conceded": gc,
-                "played": len(recent)
+                "label": "GOOD FORM" if pts >= 10 else "STABLE" if pts >= 6 else "POOR FORM"
             }
 
         h_stats = get_team_stats(home_team)
         a_stats = get_team_stats(away_team)
+        
+        # Add Poisson Lambda (expected goals) for the frontend HomeAwayPerformance fix
+        h_stats['lambda'] = result['base_models']['poisson']['expected_goals_home']
+        a_stats['lambda'] = result['base_models']['poisson']['expected_goals_away']
+        
         h_form = get_recent_form(home_team)
         a_form = get_recent_form(away_team)
 
-        # Simplified market analysis based on match history/probabilities
-        over_1_5 = round(min(95, (home_win_prob + away_win_prob + draw_prob * 0.5) * 1.1), 1)
-        over_2_5 = round(over_1_5 * 0.75, 1)
-        btts = round(min(90, (home_win_prob * 0.6 + away_win_prob * 0.6 + draw_prob * 0.8)), 1)
+        # Market analysis using ensemble probabilities
+        over_1_5 = round(min(98, (1 - result['base_models']['poisson'].get('matrix_0_0', 0.05)) * 100), 1)
+        # Simplified market proxies
+        over_2_5 = round((1 - result['draw'] * 0.8) * 75, 1)
+        btts = round((1 - result['draw'] * 0.5) * 65, 1)
+
+        # Calculate variance between Poisson and Meta-learner for the UI
+        poi_prob = result['base_models']['poisson']['home_win']
+        meta_prob = result['home_win']
+        variance_val = round(abs(poi_prob - meta_prob) * 100, 1)
 
         return {
             "home_team": home_team,
@@ -158,20 +163,20 @@ class PredictionEngine:
                 "away_win": away_win_prob / 100
             },
             "poisson_probs": {
-                "home": home_win_prob,
-                "draw": draw_prob,
-                "away": away_win_prob
+                "home": round(result['base_models']['poisson']['home_win'] * 100, 1),
+                "draw": round(result['base_models']['poisson']['draw'] * 100, 1),
+                "away": round(result['base_models']['poisson']['away_win'] * 100, 1)
             },
             "rf_probs": {
-                "home": home_win_prob,
-                "draw": draw_prob,
-                "away": away_win_prob
+                "home": round(result['base_models']['rf'][1] * 100, 1),
+                "draw": round(result['base_models']['rf'][0] * 100, 1),
+                "away": round(result['base_models']['rf'][2] * 100, 1)
             },
-            "confidence": confidence,
+            "confidence": round(confidence_val * 100, 1),
             "comparison": {
-                "agreement": "HIGH",
-                "variance": 10.0,
-                "recommendation": "XGBoost Optimized Prediction"
+                "agreement": "HIGH" if result['confidence'] == "high" else "MEDIUM" if result['confidence'] == "medium" else "LOW",
+                "variance": variance_val,
+                "recommendation": "Ensemble Optimized Prediction"
             },
             "market_analysis": {
                 "over_1_5": over_1_5,
@@ -188,15 +193,16 @@ class PredictionEngine:
                 "momentum_gap": h_form['points'] - a_form['points']
             },
             "insights": {
-                "poisson": f"XGBoost Analysis projects a likely outcome based on {h_stats['avg_scored']} goals/match form.",
-                "predictor": f"Momentum gap of {h_form['points'] - a_form['points']} points in the last 5 matches."
+                "poisson": f"Dixon-Coles Analysis projects {predicted_score} based on attacking parameters.",
+                "predictor": f"Stacking ensemble combines 4 models for high-variance capture."
             },
             "player_impact": {
                 "home_key_player": home_player_stats,
                 "away_key_player": away_player_stats,
                 "home_injured": home_injured,
                 "away_injured": away_injured,
-                "insight": f"CRITICAL: {home_player_stats['top_scorer']} is out for {home_team}." if home_injured else f"CRITICAL: {away_player_stats['top_scorer']} is out for {away_team}." if away_injured else "Key players are fit."
+                "insight": f"Injury to {home_player_stats['top_scorer']} reduces {home_team} win probability." if home_injured else "Full squad available for key players."
             },
             "h2h_history": self.get_h2h_history(home_team, away_team)
         }
+

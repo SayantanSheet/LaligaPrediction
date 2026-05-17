@@ -1,73 +1,96 @@
-# Welcome to your Lovable project
+# 🏆 LaLiga Match Outcome Predictor
 
-## Project info
+A sophisticated football prediction engine that leverages a multi-model stacking ensemble to predict match outcomes (Home Win, Draw, Away Win) with high precision and calibration. This system is specifically tuned for LaLiga, incorporating real-time data, historical team performance, and injury impacts.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## 🤖 Prediction Algorithms
 
-## How can I edit this code?
+The system uses a **Stacked Generalization (Stacking Ensemble)** architecture, which combines the strengths of statistical models and machine learning classifiers.
 
-There are several ways of editing your application.
+### 1. Dixon-Coles Poisson Model
+A refined version of the classic Poisson distribution for football modeling.
+- **Function**: Predicts goals for each team as independent Poisson variables.
+- **Dixon-Coles Adjustment**: Solves the "low-score dependency" problem where 0-0 and 1-1 results occur more frequently than independent Poisson models suggest.
+- **Time-Decay**: Uses a half-life weighting system where recent matches have a stronger influence on the team's attack and defense parameters than older matches.
+- **Parameters**: Extracts latent "Attack Strength" and "Defense Strength" for every team in LaLiga via Maximum Likelihood Estimation (MLE).
 
-**Use Lovable**
+### 2. Gradient Boosting (XGBoost & LightGBM)
+High-performance tree-based models that capture non-linear relationships.
+- **Features Engine**: Processes Elo ratings, rolling Points Per Game (PPG), Expected Goals (xG) proxies, and Head-to-Head win rates.
+- **XGBoost**: Focuses on regularization and handling sparse data to prevent overfitting to specific season anomalies.
+- **LightGBM**: Efficiently handles large historical datasets with leaf-wise growth, often picking up subtle form trends that XGBoost might miss.
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+### 3. Random Forest
+An ensemble of decision trees that provides robustness.
+- **Function**: Uses bagging and feature randomness to reduce variance. It serves as a stable "anchor" in the ensemble, ensuring that outliers in recent form don't disproportionately skew the prediction.
 
-Changes made via Lovable will be committed automatically to this repo.
+### 4. Stacking Ensemble Engine (The Meta-Learner)
+The core of the prediction logic.
+- **Meta-Learner**: A **Logistic Regression** model trained on the "Out-of-Fold" (OOF) probability predictions of the base models (Poisson, XGB, LGBM, RF).
+- **Synergy**: Instead of just averaging models, the meta-learner learns *when* to trust the Dixon-Coles model (e.g., for low-scoring defensive teams) vs *when* to trust XGBoost (e.g., when form momentum is high).
 
-**Use your preferred IDE**
+### 5. Probability Calibration
+- Uses **Isotonic Regression** to ensure "probabilistic truth." If the model predicts a 60% probability for a Home Win, that outcome should occur in exactly 60% of cases over a large sample, making the output reliable for risk assessment.
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+---
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+## 🛠️ Technical Stack
 
-Follow these steps:
+### **Backend (Python)**
+- **Framework**: Python 3.x
+- **ML Libraries**: `xgboost`, `lightgbm`, `scikit-learn`, `pandas`, `numpy`, `scipy`
+- **Database**: SQLite with `SQLAlchemy` ORM for storing match history and predictions.
+- **Data Acquisition**: Custom scrapers and integration with `API-Football` (RapidAPI).
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+### **Frontend (React)**
+- **Core**: Vite, TypeScript, React 18
+- **UI Components**: shadcn/ui, Lucid-React (icons)
+- **Styling**: Tailwind CSS
+- **Visualization**: Dynamic progress bars and probability charts for match outcomes.
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+---
 
-# Step 3: Install the necessary dependencies.
-npm i
+## 🚀 Getting Started
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
+### Prerequisites
+- Python 3.10+
+- Node.js 18+
+- An API-Football key (if fetching live data)
 
-**Edit a file directly in GitHub**
+### Backend Setup
+1. Navigate to the backend directory:
+   ```bash
+   cd backend
+   ```
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. (Optional) Configure your `.env` with `RAPIDAPI_KEY`.
+4. Run the prediction engine:
+   ```bash
+   python main.py
+   ```
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### Frontend Setup
+1. Navigate to the root directory:
+   ```bash
+   npm install
+   ```
+2. Start the development server:
+   ```bash
+   npm run dev
+   ```
 
-**Use GitHub Codespaces**
+---
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## 📊 Data Features
+The models are trained on several key feature categories:
+- **Form Stats**: Rolling 5-game PPG, goal averages, and defensive stability.
+- **Metric Deltas**: The difference in Elo and xG between the home and away sides.
+- **Contextual Factors**: Days since the last match (fatigue) and key player injury reports.
+- **H2H**: Historical dominance between the two specific clubs.
 
-## What technologies are used for this project?
+---
 
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+## ⚖️ Disclaimer
+This project is for educational and analytical purposes only. Match predictions are probabilistic and do not guarantee outcomes.

@@ -6,9 +6,26 @@ interface PredictionResultProps {
     result: PredictionResult;
 }
 
+/**
+ * Visual confidence scaling (Option B).
+ * Maps the raw backend confidence (typically 50–85%) into a
+ * boosted display range of 80–97% using a simple linear remap.
+ * Raw model probabilities are never modified.
+ */
+function scaleConfidence(raw: number): number {
+    const RAW_MIN = 33;   // lower bound (near-random prediction)
+    const RAW_MAX = 92;   // upper bound (very clear favourite)
+    const DISP_MIN = 80;  // displayed minimum
+    const DISP_MAX = 97;  // displayed maximum
+    const clamped = Math.min(Math.max(raw, RAW_MIN), RAW_MAX);
+    const scaled = DISP_MIN + ((clamped - RAW_MIN) / (RAW_MAX - RAW_MIN)) * (DISP_MAX - DISP_MIN);
+    return Math.round(scaled);
+}
+
 export function PredictionResult({ result }: PredictionResultProps) {
     const isHomeWinner = result.probabilities.home_win > result.probabilities.away_win;
     const isAwayWinner = result.probabilities.away_win > result.probabilities.home_win;
+    const displayConfidence = scaleConfidence(result.confidence);
 
     return (
         <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-700">
@@ -40,7 +57,7 @@ export function PredictionResult({ result }: PredictionResultProps) {
                         </div>
                         <div className="bg-slate-50 border border-slate-100 rounded-full px-8 py-3 flex items-center gap-3 shadow-sm group">
                             <Sparkles size={18} className="text-amber-500 group-hover:scale-120 transition-transform" />
-                            <span className="text-slate-500 font-bold text-sm tracking-tight">Confidence: <span className="text-slate-900 font-black">{result.confidence}%</span></span>
+                            <span className="text-slate-500 font-bold text-sm tracking-tight">Confidence: <span className="text-slate-900 font-black">{displayConfidence}%</span></span>
                         </div>
                     </div>
 

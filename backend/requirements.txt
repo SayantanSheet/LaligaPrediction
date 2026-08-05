@@ -1,12 +1,21 @@
+# Web Framework & API
 fastapi
 uvicorn
-sqlalchemy
 pydantic
+sqlalchemy
 requests
 python-dotenv
+
+# Data Science & Machine Learning
+numpy
 pandas
+scipy
 scikit-learn
 xgboost
+lightgbm
+category-encoders
+matplotlib
+
+# Web Scraping & HTML Parsing
 beautifulsoup4
 lxml
-category-encoders

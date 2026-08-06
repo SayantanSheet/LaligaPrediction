@@ -6,7 +6,6 @@
 [![Python Version](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![React Version](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://reactjs.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.141+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 A state-of-the-art football prediction system engineered with a multi-model stacking ensemble framework specifically optimized for **LaLiga**. The platform couples statistical goal-generation models with gradient-boosted decision trees and random forests to forecast match outcomes (Home Win, Draw, Away Win) and exact scorelines. The pipeline features strict temporal-safety barriers (zero data leakage), out-of-fold stacking, and isotonic probability calibration.
 
@@ -209,40 +208,3 @@ docker-compose up --build -d
 
 - **Frontend Dashboard**: `http://localhost:80`
 - **Backend REST API**: `http://localhost:8000`
-
----
-
-## 🚀 How to Run Evaluation & Benchmarking
-
-To execute backtesting cross-validation sweeps on historical match data:
-
-```bash
-python evaluate_pipeline.py
-```
-
-Output metrics include Ranked Probability Score (RPS), Log Loss, Macro F1-score, and Draw Recall.
-
----
-
-## 🔮 Future Improvements
-
-- [ ] **Expected Goals (xG) Integration**: Incorporate shot-level xG metrics into feature engineering.
-- [ ] **Automated Daily Retraining Pipeline**: Scheduled GitHub Action or cron job triggering `/api/refresh` daily.
-- [ ] **Live Odds Value Bet Finder**: Compare model probability outputs against real-time bookmaker odds to compute expected value (+EV).
-- [ ] **Player Tracking & Lineup Dynamics**: Integrate real-time starting 11 tactical formations.
-
----
-
-## 👨‍💻 Author & Contribution
-
-**Sayantan**
-- **GitHub**: [@sayantan](https://github.com/sayantan)
-- **Project Repository**: [LaligaPrediction-project](https://github.com/sayantan/LaligaPrediction-project)
-
-Contributions, issues, and feature requests are welcome! Feel free to check out the [issues page](https://github.com/sayantan/LaligaPrediction-project/issues).
-
----
-
-## 📄 License
-
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.

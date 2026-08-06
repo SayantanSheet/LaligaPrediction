@@ -22,6 +22,10 @@ init_db()
 
 engine = PredictionEngine()
 
+@app.get("/")
+def root():
+    return {"status": "healthy", "service": "LaLiga Predictor API"}
+
 class PredictionRequest(BaseModel):
     home_team: str
     away_team: str

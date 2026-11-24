@@ -31,3 +31,9 @@ yarn-debug.log*
 .DS_Store
 *.suo
 *.sw?
+
+# Backend runtime artefacts
+backend/.venv/
+backend/data/raw/
+backend/.pytest_cache/
+.pytest_cache/

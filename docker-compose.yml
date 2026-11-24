@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build:
@@ -9,8 +7,10 @@ services:
       - "8000:8000"
     environment:
       - API_FOOTBALL_KEY=${API_FOOTBALL_KEY:-}
+      - CORS_ORIGINS=http://localhost,http://localhost:8080
+      - DATABASE_URL=sqlite:////app/state/predictions.db
     volumes:
-      - ./backend/predictions.db:/app/backend/predictions.db
+      - backend-state:/app/state
 
   frontend:
     build:
@@ -22,3 +22,6 @@ services:
       - "80:80"
     depends_on:
       - backend
+
+volumes:
+  backend-state:

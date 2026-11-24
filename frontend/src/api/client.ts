@@ -1,97 +1,69 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+import type {
+  Health, HistoryItem, InjuryTracker, Leaders, LiveFixtures, ModelMetrics, PlayerComparison, PlayerProfile,
+  PlayerSummary, PowerRanking, Prediction, Results, SimulatedRound, Standings, TeamAnalysis, TeamItem, UpcomingFixtures,
+} from "./types";
 
-export interface PredictionResult {
-    home_team: string;
-    away_team: string;
-    predicted_score: string;
-    probabilities: {
-        home_win: number;
-        draw: number;
-        away_win: number;
-    };
-    poisson_probs: { home: number, draw: number, away: number };
-    rf_probs: { home: number, draw: number, away: number };
-    confidence: number;
-    comparison: {
-        agreement: 'HIGH' | 'MEDIUM' | 'LOW';
-        variance: number;
-        recommendation: string;
-    };
-    market_analysis: {
-        over_1_5: number;
-        over_2_5: number;
-        btts: number;
-    };
-    performance_analysis: {
-        home: TeamPerformance;
-        away: TeamPerformance;
-    };
-    form_analysis: {
-        home: TeamStats & { points: number, label: string };
-        away: TeamStats & { points: number, label: string };
-        momentum_gap: number;
-    };
-    insights: {
-        poisson: string;
-        predictor: string;
-    };
-    h2h_history: any[];
-    player_impact?: {
-        home_key_player: {
-            top_scorer: string;
-            goals: number;
-            key_injured: boolean;
-        };
-        away_key_player: {
-            top_scorer: string;
-            goals: number;
-            key_injured: boolean;
-        };
-        home_injured: boolean;
-        away_injured: boolean;
-        insight: string;
-    };
+export * from "./types";
+
+export const API_BASE_URL: string = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") || "http://localhost:8000/api";
+
+export class ApiError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+  }
 }
 
-export interface TeamPerformance {
-    avg_scored: number;
-    avg_conceded: number;
-    played: number;
-    lambda: number;
-    strength: 'STRONG' | 'AVERAGE' | 'WEAK';
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    });
+  } catch {
+    throw new ApiError("Cannot reach the prediction server. It may be waking up — try again in a moment.", 0);
+  }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(detail || `Request failed (${res.status})`, res.status);
+  }
+  return res.json() as Promise<T>;
 }
 
-export interface TeamStats {
-    played: number;
-    wins: number;
-    draws: number;
-    losses: number;
-    goals_scored: number;
-    goals_conceded: number;
-    match_history: any[];
-}
+const qs = (params: Record<string, string | number | boolean | undefined | null>) => {
+  const s = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") s.set(k, String(v));
+  });
+  const str = s.toString();
+  return str ? `?${str}` : "";
+};
 
 export const api = {
-    getTeams: async (): Promise<string[]> => {
-        const response = await fetch(`${API_BASE_URL}/teams`);
-        if (!response.ok) throw new Error('Failed to fetch teams');
-        const data = await response.json();
-        return data.teams;
-    },
-
-    predictMatch: async (homeTeam: string, awayTeam: string): Promise<PredictionResult> => {
-        const response = await fetch(`${API_BASE_URL}/predict`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ home_team: homeTeam, away_team: awayTeam }),
-        });
-        if (!response.ok) throw new Error('Failed to get prediction');
-        return response.json();
-    },
-
-    getHistory: async (): Promise<any[]> => {
-        const response = await fetch(`${API_BASE_URL}/history`);
-        if (!response.ok) throw new Error('Failed to fetch history');
-        return response.json();
-    }
+  health: () => request<Health>("/health"),
+  teams: () => request<{ teams: string[]; items: TeamItem[]; season: number }>("/teams"),
+  predict: (home_team: string, away_team: string, use_availability = true) =>
+    request<Prediction>("/predict", { method: "POST", body: JSON.stringify({ home_team, away_team, use_availability }) }),
+  standings: (season?: number) => request<Standings>(`/standings${qs({ season })}`),
+  powerRankings: () => request<{ items: PowerRanking[] }>("/power-rankings"),
+  teamAnalysis: (team: string) => request<TeamAnalysis>(`/teams/${encodeURIComponent(team)}/analysis`),
+  h2h: (home: string, away: string) => request<Prediction["h2h"]>(`/h2h${qs({ home, away })}`),
+  players: (p: { team?: string; position?: string; q?: string; sort?: string; min_minutes?: number; limit?: number } = {}) =>
+    request<{ season: number; items: PlayerSummary[] }>(`/players${qs(p)}`),
+  leaders: (limit = 10) => request<Leaders>(`/players/leaders${qs({ limit })}`),
+  player: (id: number) => request<PlayerProfile>(`/players/${id}`),
+  compare: (a: number, b: number) => request<PlayerComparison>(`/players/compare${qs({ a, b })}`),
+  injuries: (team?: string) => request<InjuryTracker>(`/injuries${qs({ team })}`),
+  live: () => request<LiveFixtures>("/fixtures/live"),
+  upcoming: () => request<UpcomingFixtures>("/fixtures/upcoming"),
+  results: (limit = 40) => request<Results>(`/fixtures/results${qs({ limit })}`),
+  simulateRound: () => request<SimulatedRound>("/fixtures/simulate-round"),
+  modelMetrics: () => request<ModelMetrics>("/model/metrics"),
+  history: (limit = 50) => request<{ total: number; items: HistoryItem[] }>(`/history${qs({ limit })}`),
 };

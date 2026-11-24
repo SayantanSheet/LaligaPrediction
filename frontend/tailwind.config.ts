@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import tailwindcssAnimate from "tailwindcss-animate";
 
 export default {
   darkMode: ["class"],
@@ -14,8 +15,8 @@ export default {
     },
     extend: {
       fontFamily: {
-        display: ["Oswald", "sans-serif"],
-        sans: ["Inter", "sans-serif"],
+        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -61,16 +62,15 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
-        // Custom sport colors
-        team: {
-          home: "hsl(var(--team-home))",
-          away: "hsl(var(--team-away))",
-        },
-        result: {
-          win: "hsl(var(--win))",
-          draw: "hsl(var(--draw))",
-          lose: "hsl(var(--lose))",
-        },
+        home: "var(--series-home)",
+        away: "var(--series-away)",
+        drawc: "var(--series-draw)",
+        series3: "var(--series-3)",
+        good: "var(--good)",
+        "good-text": "var(--good-text)",
+        warning: "var(--warning)",
+        serious: "var(--serious)",
+        critical: "var(--critical)",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -119,5 +119,5 @@ export default {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [tailwindcssAnimate],
 } satisfies Config;

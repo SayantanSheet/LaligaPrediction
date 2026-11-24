@@ -8,7 +8,6 @@ WORKDIR /app/frontend
 RUN npm ci
 
 COPY frontend/ ./
-COPY src/ ../src/
 
 ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
